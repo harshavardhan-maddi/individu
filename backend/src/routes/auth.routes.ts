@@ -20,7 +20,7 @@ authRouter.post("/login", async (req, res) => {
   const { rows } = await pool.query(
     `SELECT u.id, u.password_hash, u.role, u.is_active, u.must_reset_password, f.id as faculty_id
      FROM users u LEFT JOIN faculty f ON f.user_id = u.id
-     WHERE u.email = $1`,
+     WHERE LOWER(u.email) = LOWER($1)`,
     [email]
   );
   const user = rows[0];
