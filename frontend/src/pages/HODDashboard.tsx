@@ -310,7 +310,7 @@ export default function HODDashboard() {
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 md:py-10">
-      <AppHeader name={hodName} department={hodDept} />
+      <AppHeader name="" department="" />
 
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Overview</h1>

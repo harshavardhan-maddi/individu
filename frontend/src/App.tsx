@@ -17,20 +17,13 @@ function getAuthPayload() {
 }
 
 function ProtectedRoute({ children, allowedRole }: { children: JSX.Element; allowedRole?: "hod" | "faculty" }) {
-  const payload = getAuthPayload();
-  if (!payload) return <Navigate to="/login" replace />;
-
-  if (allowedRole && payload.role !== allowedRole) {
-    return <Navigate to={payload.role === "hod" ? "/hod" : "/dashboard"} replace />;
-  }
-
+  // Bypassed: always render children
   return children;
 }
 
 function RootRedirect() {
-  const payload = getAuthPayload();
-  if (!payload) return <Navigate to="/login" replace />;
-  return <Navigate to={payload.role === "hod" ? "/hod" : "/dashboard"} replace />;
+  // Bypassed: always render HOD dashboard
+  return <Navigate to="/hod" replace />;
 }
 
 export default function App() {
@@ -38,7 +31,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<Login />} />
+          <Route path="/login" element={<Navigate to="/hod" replace />} />
           <Route
             path="/dashboard"
             element={
