@@ -45,16 +45,16 @@ export default function Login() {
         <h1 className="text-xl font-bold text-slate-800 dark:text-white">Faculty Scheduler Pro</h1>
         <p className="text-sm text-slate-500 dark:text-slate-400 mt-1 mb-6">Sign in to view your schedule</p>
 
-        <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1">Email</label>
+        <label className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1">Email / ID</label>
         <div className="relative mb-4">
           <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
-            type="email"
+            type="text"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white/70 dark:bg-white/5 border border-slate-200 dark:border-slate-700 text-sm outline-none focus:ring-2 focus:ring-indigo-400"
-            placeholder="you@college.edu"
+            placeholder="Email or ID"
           />
         </div>
 
