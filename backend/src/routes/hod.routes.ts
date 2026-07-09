@@ -10,13 +10,13 @@ hodRouter.post("/reset", async (_req, res) => {
   try {
     await pool.query("DELETE FROM logs");
     await pool.query("DELETE FROM schedules");
+    await pool.query("DELETE FROM uploads");
     await pool.query("DELETE FROM classes");
     await pool.query("DELETE FROM subjects");
     await pool.query("DELETE FROM faculty");
     await pool.query("DELETE FROM users WHERE role = 'faculty'");
     await pool.query("DELETE FROM rooms");
     await pool.query("DELETE FROM departments");
-    await pool.query("DELETE FROM uploads");
     res.json({ success: true });
   } catch (err) {
     console.error(err);
