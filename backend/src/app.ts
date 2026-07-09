@@ -33,3 +33,5 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   console.error(err);
   res.status(err.status ?? 500).json({ error: err.message ?? "Internal server error" });
 });
+
+export default app;
