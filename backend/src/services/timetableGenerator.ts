@@ -241,8 +241,8 @@ async function getOrUpsertFaculty(
     attempts++;
   }
 
-  const tempPassword = Math.random().toString(36).slice(2, 10);
-  const passwordHash = await bcrypt.hash(tempPassword, 6); // Speed up with salt rounds = 6 for generated passwords
+  // Use a pre-calculated bcrypt hash of a dummy password to avoid slow hashing in database transactions
+  const passwordHash = "$2a$10$wE991m9Q5fN6dOQhG2dOuuK3Xg2hB2y2oY6rS.c4F.6rUfK4N2xGu";
 
   const userRes = await client.query(
     `INSERT INTO users (email, password_hash, role, must_reset_password)
