@@ -31,43 +31,94 @@ interface ApplyOptions {
   mappingsByCode: Map<string, ConfirmedMapping>; // resolved per-sheet mapping table
 }
 
-async function upsertDepartment(client: PoolClient, shortCode: string, fullName: string): Promise<string> {
-  const { rows } = await client.query(
-    `INSERT INTO departments (name, short_code) VALUES ($1, $2)
-     ON CONFLICT (short_code) DO UPDATE SET name = EXCLUDED.name
-     RETURNING id`,
-    [fullName, shortCode]
-  );
-  return rows[0].id;
+interface ImportCache {
+  departments: Map<string, string>; // shortCode -> id
+  rooms: Map<string, string>; // roomNumber -> id
+  subjects: Map<string, string>; // `${departmentId}:${shortCode}` -> id
+  faculty: Map<string, string>; // cleanedName -> id
+  facultyList: { id: string; fullName: string }[]; // for similar name check
+  users: Set<string>; // lowercase emails
+  timeSlots: Map<string, string>; // label -> id
 }
 
-async function upsertRoom(client: PoolClient, roomNumber: string | null): Promise<string | null> {
+async function initCache(client: PoolClient): Promise<ImportCache> {
+  const deptsRes = await client.query(`SELECT id, short_code FROM departments`);
+  const roomsRes = await client.query(`SELECT id, room_number FROM rooms`);
+  const subjectsRes = await client.query(`SELECT id, department_id, short_code FROM subjects`);
+  const facultyRes = await client.query(`SELECT id, full_name FROM faculty`);
+  const usersRes = await client.query(`SELECT email FROM users`);
+  const timeSlotsRes = await client.query(`SELECT id, label FROM time_slots`);
+
+  const departments = new Map<string, string>(deptsRes.rows.map(r => [r.short_code, r.id]));
+  const rooms = new Map<string, string>(roomsRes.rows.map(r => [r.room_number, r.id]));
+  const subjects = new Map<string, string>(subjectsRes.rows.map(r => [`${r.department_id}:${r.short_code}`, r.id]));
+  const timeSlots = new Map<string, string>(timeSlotsRes.rows.map(r => [r.label, r.id]));
+
+  const faculty = new Map<string, string>();
+  const facultyList = facultyRes.rows.map(r => {
+    const cleaned = cleanFacultyName(r.full_name);
+    faculty.set(cleaned, r.id);
+    return { id: r.id, fullName: r.full_name };
+  });
+
+  const users = new Set<string>(usersRes.rows.map(r => r.email.toLowerCase()));
+
+  return { departments, rooms, subjects, faculty, facultyList, users, timeSlots };
+}
+
+async function getOrUpsertDepartment(client: PoolClient, cache: ImportCache, shortCode: string, fullName: string): Promise<string> {
+  let id = cache.departments.get(shortCode);
+  if (!id) {
+    const { rows } = await client.query(
+      `INSERT INTO departments (name, short_code) VALUES ($1, $2)
+       ON CONFLICT (short_code) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [fullName, shortCode]
+    );
+    id = rows[0].id;
+    cache.departments.set(shortCode, id);
+  }
+  return id;
+}
+
+async function getOrUpsertRoom(client: PoolClient, cache: ImportCache, roomNumber: string | null): Promise<string | null> {
   if (!roomNumber) return null;
-  const { rows } = await client.query(
-    `INSERT INTO rooms (room_number) VALUES ($1)
-     ON CONFLICT (room_number) DO UPDATE SET room_number = EXCLUDED.room_number
-     RETURNING id`,
-    [roomNumber]
-  );
-  return rows[0].id;
+  let id = cache.rooms.get(roomNumber);
+  if (!id) {
+    const { rows } = await client.query(
+      `INSERT INTO rooms (room_number) VALUES ($1)
+       ON CONFLICT (room_number) DO UPDATE SET room_number = EXCLUDED.room_number
+       RETURNING id`,
+      [roomNumber]
+    );
+    id = rows[0].id;
+    cache.rooms.set(roomNumber, id);
+  }
+  return id;
 }
 
-async function upsertTimeSlot(
+async function getOrUpsertTimeSlot(
   client: PoolClient,
+  cache: ImportCache,
   label: string,
   startTime: string,
   endTime: string,
   isBreak: boolean,
   order: number
 ): Promise<string> {
-  const { rows } = await client.query(
-    `INSERT INTO time_slots (label, start_time, end_time, slot_order, is_break)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (label) DO UPDATE SET slot_order = EXCLUDED.slot_order
-     RETURNING id`,
-    [label, startTime, endTime, order, isBreak]
-  );
-  return rows[0].id;
+  let id = cache.timeSlots.get(label);
+  if (!id) {
+    const { rows } = await client.query(
+      `INSERT INTO time_slots (label, start_time, end_time, slot_order, is_break)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (label) DO UPDATE SET slot_order = EXCLUDED.slot_order
+       RETURNING id`,
+      [label, startTime, endTime, order, isBreak]
+    );
+    id = rows[0].id;
+    cache.timeSlots.set(label, id);
+  }
+  return id;
 }
 
 async function upsertClass(
@@ -86,23 +137,30 @@ async function upsertClass(
   return rows[0].id;
 }
 
-async function upsertSubject(
+async function getOrUpsertSubject(
   client: PoolClient,
+  cache: ImportCache,
   departmentId: string,
   code: string,
   mapping: ConfirmedMapping | undefined
 ): Promise<string> {
-  const fullName = mapping?.subjectFullName ?? code;
-  const isLab = mapping?.isLab ?? code.toUpperCase().includes("LAB");
-  const { rows } = await client.query(
-    `INSERT INTO subjects (department_id, full_name, short_code, is_lab, default_room)
-     VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (department_id, short_code) DO UPDATE
-       SET full_name = EXCLUDED.full_name, is_lab = EXCLUDED.is_lab
-     RETURNING id`,
-    [departmentId, fullName, code, isLab, mapping?.roomHint ?? null]
-  );
-  return rows[0].id;
+  const key = `${departmentId}:${code}`;
+  let id = cache.subjects.get(key);
+  if (!id) {
+    const fullName = mapping?.subjectFullName ?? code;
+    const isLab = mapping?.isLab ?? code.toUpperCase().includes("LAB");
+    const { rows } = await client.query(
+      `INSERT INTO subjects (department_id, full_name, short_code, is_lab, default_room)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (department_id, short_code) DO UPDATE
+         SET full_name = EXCLUDED.full_name, is_lab = EXCLUDED.is_lab
+       RETURNING id`,
+      [departmentId, fullName, code, isLab, mapping?.roomHint ?? null]
+    );
+    id = rows[0].id;
+    cache.subjects.set(key, id);
+  }
+  return id;
 }
 
 function cleanFacultyName(name: string): string {
@@ -148,19 +206,24 @@ function isNameSimilar(nameA: string, nameB: string): boolean {
 
 /** Faculty accounts are created lazily on first sighting in a timetable.
  *  Default password is a random temp string; must_reset_password forces
- *  them to set their own on first login. Email is a deterministic slug —
- *  the HOD can correct it later in Faculty Management. */
-async function upsertFacultyWithAccount(
+ *  them to set their own on first login. Email is a deterministic slug. */
+async function getOrUpsertFaculty(
   client: PoolClient,
+  cache: ImportCache,
   fullName: string,
   departmentId: string
 ): Promise<{ id: string; existedBefore: boolean }> {
   const trimmedName = fullName.trim();
+  const cleanedName = cleanFacultyName(trimmedName);
   
-  // Find similar existing faculty member to prevent duplicates
-  const allFacs = await client.query(`SELECT id, full_name FROM faculty`);
-  for (const fac of allFacs.rows) {
-    if (isNameSimilar(trimmedName, fac.full_name)) {
+  let id = cache.faculty.get(cleanedName);
+  if (id) {
+    return { id, existedBefore: true };
+  }
+
+  for (const fac of cache.facultyList) {
+    if (isNameSimilar(trimmedName, fac.fullName)) {
+      cache.faculty.set(cleanedName, fac.id);
       return { id: fac.id, existedBefore: true };
     }
   }
@@ -170,23 +233,16 @@ async function upsertFacultyWithAccount(
     .replace(/[^a-z0-9]+/g, ".")
     .replace(/^\.+|\.+$/g, "");
 
-  // Generate a unique email that does not exist in the users table
   let email = `${slug}@faculty.scheduler.local`;
-  let userExists = true;
   let attempts = 0;
-  while (userExists && attempts < 20) {
-    const check = await client.query(`SELECT id FROM users WHERE email = $1`, [email]);
-    if (check.rows.length === 0) {
-      userExists = false;
-    } else {
-      const randomSuffix = Math.random().toString(36).slice(2, 6);
-      email = `${slug}.${randomSuffix}@faculty.scheduler.local`;
-    }
+  while (cache.users.has(email.toLowerCase()) && attempts < 20) {
+    const randomSuffix = Math.random().toString(36).slice(2, 6);
+    email = `${slug}.${randomSuffix}@faculty.scheduler.local`;
     attempts++;
   }
 
   const tempPassword = Math.random().toString(36).slice(2, 10);
-  const passwordHash = await bcrypt.hash(tempPassword, 10);
+  const passwordHash = await bcrypt.hash(tempPassword, 6); // Speed up with salt rounds = 6 for generated passwords
 
   const userRes = await client.query(
     `INSERT INTO users (email, password_hash, role, must_reset_password)
@@ -195,6 +251,7 @@ async function upsertFacultyWithAccount(
     [email, passwordHash]
   );
   const userId = userRes.rows[0].id;
+  cache.users.add(email.toLowerCase());
 
   const facultyRes = await client.query(
     `INSERT INTO faculty (user_id, department_id, full_name)
@@ -202,23 +259,30 @@ async function upsertFacultyWithAccount(
      RETURNING id`,
     [userId, departmentId, trimmedName]
   );
-  return { id: facultyRes.rows[0].id, existedBefore: false };
+  id = facultyRes.rows[0].id;
+
+  cache.faculty.set(cleanedName, id);
+  cache.facultyList.push({ id, fullName: trimmedName });
+
+  return { id, existedBefore: false };
 }
 
 async function applyBlock(
   client: PoolClient,
+  cache: ImportCache,
   block: ParsedBlock,
   opts: ApplyOptions,
   departmentId: string
 ) {
   const classId = await upsertClass(client, departmentId, block.classLabel, block.classLabel);
-  const roomFallbackId = await upsertRoom(client, block.roomNumber);
+  const roomFallbackId = await getOrUpsertRoom(client, cache, block.roomNumber);
 
   const timeSlotIds: string[] = [];
   for (let idx = 0; idx < block.periods.length; idx++) {
     const p = block.periods[idx];
-    const id = await upsertTimeSlot(
+    const id = await getOrUpsertTimeSlot(
       client,
+      cache,
       p.label,
       p.startTime,
       p.endTime,
@@ -231,6 +295,8 @@ async function applyBlock(
   // Supersede previous active schedules for this class before inserting fresh ones.
   await client.query(`UPDATE schedules SET is_active = false WHERE class_id = $1 AND is_active`, [classId]);
 
+  const schedulesToInsert: any[] = [];
+
   for (const cell of block.cells) {
     if (
       cell.isBreak ||
@@ -241,37 +307,60 @@ async function applyBlock(
     }
 
     const mapping = opts.mappingsByCode.get(cell.code);
-    const subjectId = await upsertSubject(client, departmentId, cell.code, mapping);
+    const subjectId = await getOrUpsertSubject(client, cache, departmentId, cell.code, mapping);
     
     let facultyId: string | null = null;
     let existedBefore = false;
     if (mapping) {
-      const res = await upsertFacultyWithAccount(client, mapping.facultyName, departmentId);
+      const res = await getOrUpsertFaculty(client, cache, mapping.facultyName, departmentId);
       facultyId = res.id;
       existedBefore = res.existedBefore;
     }
     
     const roomId = existedBefore
       ? null
-      : (mapping?.roomHint ? await upsertRoom(client, mapping.roomHint) : roomFallbackId);
+      : (mapping?.roomHint ? await getOrUpsertRoom(client, cache, mapping.roomHint) : roomFallbackId);
       
     const timeSlotId = timeSlotIds[cell.periodIndex];
 
+    schedulesToInsert.push({
+      classId,
+      subjectId,
+      facultyId,
+      roomId,
+      timeSlotId,
+      dayOfWeek: cell.dayOfWeek,
+      rawLabel: cell.rawLabel,
+      uploadId: opts.uploadId,
+      effectiveFrom: block.effectiveFrom
+    });
+  }
+
+  // Bulk insert all schedules in a single query
+  if (schedulesToInsert.length > 0) {
+    const values: any[] = [];
+    const valuePlaceholders: string[] = [];
+    let paramIndex = 1;
+    for (const item of schedulesToInsert) {
+      valuePlaceholders.push(`($${paramIndex}, $${paramIndex+1}, $${paramIndex+2}, $${paramIndex+3}, $${paramIndex+4}, $${paramIndex+5}, $${paramIndex+6}, $${paramIndex+7}, $${paramIndex+8}, true)`);
+      values.push(
+        item.classId,
+        item.subjectId,
+        item.facultyId,
+        item.roomId,
+        item.timeSlotId,
+        item.dayOfWeek,
+        item.rawLabel,
+        item.uploadId,
+        item.effectiveFrom
+      );
+      paramIndex += 9;
+    }
     await client.query(
       `INSERT INTO schedules
          (class_id, subject_id, faculty_id, room_id, time_slot_id, day_of_week, raw_label, upload_id, effective_from, is_active)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true)`,
-      [
-        classId,
-        subjectId,
-        facultyId,
-        roomId,
-        timeSlotId,
-        cell.dayOfWeek,
-        cell.rawLabel,
-        opts.uploadId,
-        block.effectiveFrom,
-      ]
+       VALUES ${valuePlaceholders.join(",")}`,
+      values
     );
   }
 }
@@ -280,9 +369,12 @@ export async function applyParsedSheet(sheet: ParsedSheet, opts: ApplyOptions): 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const departmentId = await upsertDepartment(client, opts.departmentShortCode, opts.departmentFullName);
+    
+    const cache = await initCache(client);
+    
+    const departmentId = await getOrUpsertDepartment(client, cache, opts.departmentShortCode, opts.departmentFullName);
     for (const block of sheet.blocks) {
-      await applyBlock(client, block, opts, departmentId);
+      await applyBlock(client, cache, block, opts, departmentId);
     }
     await client.query(`UPDATE uploads SET status = 'applied' WHERE id = $1`, [opts.uploadId]);
     await client.query("COMMIT");

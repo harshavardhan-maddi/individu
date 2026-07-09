@@ -190,8 +190,14 @@ function detectBlocks(grid: (string | number | null)[][], sheetName: string): Pa
         }
         for (const v of r) {
           if (typeof v === "string" && v.toUpperCase().includes("W.E.F")) {
-            const dateMatch = v.match(/(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})/);
-            if (dateMatch) effectiveFrom = dateMatch[1];
+            const dateMatch = v.match(/(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/);
+            if (dateMatch) {
+              const day = dateMatch[1].padStart(2, "0");
+              const month = dateMatch[2].padStart(2, "0");
+              let year = dateMatch[3];
+              if (year.length === 2) year = `20${year}`;
+              effectiveFrom = `${year}-${month}-${day}`;
+            }
           }
         }
       }
