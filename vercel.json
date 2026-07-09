@@ -15,11 +15,16 @@
   ],
   "routes": [
     {
-      "handle": "filesystem"
-    },
-    {
       "src": "/api/(.*)",
       "dest": "backend/src/app.ts"
+    },
+    {
+      "src": "/assets/(.*)",
+      "dest": "frontend/assets/$1"
+    },
+    {
+      "src": "/(.*\\..*)",
+      "dest": "frontend/$1"
     },
     {
       "src": "/(.*)",
