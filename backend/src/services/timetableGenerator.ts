@@ -75,10 +75,10 @@ async function getOrUpsertDepartment(client: PoolClient, cache: ImportCache, sho
        RETURNING id`,
       [fullName, shortCode]
     );
-    id = rows[0].id;
+    id = rows[0].id as string;
     cache.departments.set(shortCode, id);
   }
-  return id;
+  return id as string;
 }
 
 async function getOrUpsertRoom(client: PoolClient, cache: ImportCache, roomNumber: string | null): Promise<string | null> {
@@ -91,10 +91,10 @@ async function getOrUpsertRoom(client: PoolClient, cache: ImportCache, roomNumbe
        RETURNING id`,
       [roomNumber]
     );
-    id = rows[0].id;
+    id = rows[0].id as string;
     cache.rooms.set(roomNumber, id);
   }
-  return id;
+  return id as string;
 }
 
 async function getOrUpsertTimeSlot(
@@ -115,10 +115,10 @@ async function getOrUpsertTimeSlot(
        RETURNING id`,
       [label, startTime, endTime, order, isBreak]
     );
-    id = rows[0].id;
+    id = rows[0].id as string;
     cache.timeSlots.set(label, id);
   }
-  return id;
+  return id as string;
 }
 
 async function upsertClass(
@@ -157,10 +157,10 @@ async function getOrUpsertSubject(
        RETURNING id`,
       [departmentId, fullName, code, isLab, mapping?.roomHint ?? null]
     );
-    id = rows[0].id;
+    id = rows[0].id as string;
     cache.subjects.set(key, id);
   }
-  return id;
+  return id as string;
 }
 
 function cleanFacultyName(name: string): string {
@@ -218,7 +218,7 @@ async function getOrUpsertFaculty(
   
   let id = cache.faculty.get(cleanedName);
   if (id) {
-    return { id, existedBefore: true };
+    return { id: id as string, existedBefore: true };
   }
 
   for (const fac of cache.facultyList) {
@@ -259,7 +259,7 @@ async function getOrUpsertFaculty(
      RETURNING id`,
     [userId, departmentId, trimmedName]
   );
-  id = facultyRes.rows[0].id;
+  id = facultyRes.rows[0].id as string;
 
   cache.faculty.set(cleanedName, id);
   cache.facultyList.push({ id, fullName: trimmedName });
