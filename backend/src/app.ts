@@ -14,7 +14,7 @@ export const app = express();
 app.use(cors({ origin: process.env.CORS_ORIGIN?.split(",") ?? "*" }));
 app.use(express.json());
 
-app.get("/health", async (_req, res) => {
+app.get("/api/health", async (_req, res) => {
   try {
     const dbTest = await pool.query("SELECT NOW()");
     res.json({ ok: true, db: true, time: dbTest.rows[0].now });
